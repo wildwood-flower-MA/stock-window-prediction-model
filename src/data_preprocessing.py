@@ -1,7 +1,7 @@
 import os
 import io
 import zipfile
-from typing import List
+from typing import List, Optional
 import numpy as np
 import h5py
 import torch
@@ -61,11 +61,15 @@ def build_hdf5_database(zip_paths: List[str], output_h5_path: str):
             dataset[current_rows:new_total_rows, :] = data
             current_rows = new_total_rows
 
+
+
 class LOBDataset(torch.utils.data.Dataset):
-    def __init__(self, file_path: str, sequence_length: int, horizon_idx: int = 0):
+    
+    def __init__(self, file_path: str, sequence_length: int, horizon_idx: int = 0, features_idx: Optional[List[int]] = None):
         self.file_path = file_path
         self.sequence_length = sequence_length
         self.horizon_idx = horizon_idx
+        self.features_idx = features_idx
         self.dataset = None
         
         with h5py.File(self.file_path, 'r') as f:
@@ -78,10 +82,13 @@ class LOBDataset(torch.utils.data.Dataset):
         if self.dataset is None:
             self.file = h5py.File(self.file_path, 'r')
             self.dataset = self.file['limit_order_book']
-            
         window = self.dataset[idx : idx + self.sequence_length] # type: ignore
-        
-        x = window[:, :144] # type: ignore
+
+        if self.features_idx is not None:
+            x = window[:, self.features_idx] # type: ignore
+        else:
+            x = window[:, :144] # type: ignore
+            
         y_raw = window[-1, 144 + self.horizon_idx] # type: ignore
         y = int(y_raw) - 1  # type: ignore
         
