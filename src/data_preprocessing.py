@@ -35,7 +35,8 @@ def build_hdf5_database(zip_paths: List[str], output_h5_path: str):
             shape=(0, num_features),
             maxshape=(None, num_features),
             chunks=True,
-            compression='gzip'
+            compression='gzip',
+            dtype='float32'
         )
 
         current_rows = 0
