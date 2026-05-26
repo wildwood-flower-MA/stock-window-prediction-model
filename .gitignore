@@ -3,3 +3,12 @@ data/
 raw_data/
 checkpoints/
 __pycache__/
+.venv/
+venv/
+virtual_env/
+.vscode/
+*.zip
+
+**/__pycache__/
+*.pyc
+*.h5
