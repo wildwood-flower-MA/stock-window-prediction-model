@@ -62,11 +62,10 @@ def build_hdf5_database(zip_paths: List[str], output_h5_path: str):
             dataset[current_rows:new_total_rows, :] = data
             current_rows = new_total_rows
 
-
-
 class LOBDataset(torch.utils.data.Dataset):
     
     def __init__(self, file_path: str, sequence_length: int, horizon_idx: int = 0, features_idx: Optional[List[int]] = None):
+        
         self.file_path = file_path
         self.sequence_length = sequence_length
         self.horizon_idx = horizon_idx
