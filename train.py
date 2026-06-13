@@ -8,6 +8,8 @@ Expects pre-processed numpy arrays in the following layout:
         y_train.npy   shape (N_train,)             int64   values in {0,1,2}
         X_val.npy     shape (N_val,   100, 40)   float32
         y_val.npy     shape (N_val,  )             int64
+        X_test.npy    shape (N_test, 100, 40)     float32
+        y_test.npy    shape (N_test,)              int64
 
 Usage:
     conda activate ML-pytorch
@@ -15,7 +17,6 @@ Usage:
 """
 
 import argparse
-import os
 import time
 from pathlib import Path
 
@@ -24,7 +25,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from model import LOBModel
+from model import build_model
 
 # ---------------------------------------------------------------------------
 # Dataset
@@ -170,7 +171,7 @@ def validate_epoch(
 # Main training function
 # ---------------------------------------------------------------------------
 
-def train(args: argparse.Namespace) -> None:
+def train(args: argparse.Namespace) -> dict:
     # ── Device ──────────────────────────────────────────────────────────────
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
@@ -184,35 +185,63 @@ def train(args: argparse.Namespace) -> None:
     y_train = np.load(data_dir / "y_train.npy", mmap_mode="r")
     X_val   = np.load(data_dir / "X_val.npy",   mmap_mode="r")
     y_val   = np.load(data_dir / "y_val.npy",   mmap_mode="r")
+    X_test  = np.load(data_dir / "X_test.npy",  mmap_mode="r")
+    y_test  = np.load(data_dir / "y_test.npy",  mmap_mode="r")
 
-    print(f"Train samples : {len(X_train):,}  |  Val samples : {len(X_val):,}")
+    max_samples = getattr(args, "max_samples", None)
+    if max_samples is not None:
+        X_train = X_train[:max_samples]
+        y_train = y_train[:max_samples]
+        X_val   = X_val[:max(1, max_samples // 5)]
+        y_val   = y_val[:max(1, max_samples // 5)]
+        X_test  = X_test[:max(1, max_samples // 5)]
+        y_test  = y_test[:max(1, max_samples // 5)]
+        print(f"[debug] Capped to {max_samples} train / {len(X_val)} val samples")
+
+    print(
+        f"Train samples : {len(X_train):,}  |  Val samples : {len(X_val):,}"
+        f"  |  Test samples : {len(X_test):,}"
+    )
     print(f"Class distribution (train): {np.bincount(y_train.astype(int))}")
 
     train_ds = LOBDataset(X_train, y_train)
     val_ds   = LOBDataset(X_val,   y_val)
+    test_ds  = LOBDataset(X_test,  y_test)
+
+    import platform
+    num_workers = 0 if platform.system() == "Windows" else args.num_workers
 
     train_loader = DataLoader(
         train_ds,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
+        num_workers=num_workers,
         pin_memory=(device.type == "cuda"),
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=args.batch_size * 2,
         shuffle=False,
-        num_workers=args.num_workers,
+        num_workers=num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=args.batch_size * 2,
+        shuffle=False,
+        num_workers=num_workers,
         pin_memory=(device.type == "cuda"),
     )
 
     # ── Model ────────────────────────────────────────────────────────────────
-    model = LOBModel(
+    model_name = getattr(args, "model_name", "LOBModel")
+    model = build_model(
+        model_name=model_name,
         in_channels=X_train.shape[2],
-        cnn_channels=64,
-        gru_hidden=128,
         num_classes=3,
     ).to(device)
+
+    print(f"Model         : {model_name}")
 
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Parameters    : {total_params:,}")
@@ -232,47 +261,77 @@ def train(args: argparse.Namespace) -> None:
     )
 
     # ── Early stopping & checkpoint ──────────────────────────────────────────
-    checkpoint_path = Path(args.output_dir) / "best_model.pt"
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = output_dir / "best_model.pt"
     early_stop = EarlyStopping(
         patience=args.patience, checkpoint=str(checkpoint_path)
     )
 
     # ── Training loop ────────────────────────────────────────────────────────
-    history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
+    history = {
+        "train_loss": [],
+        "train_acc": [],
+        "val_loss": [],
+        "val_acc": [],
+        "test_loss": [],
+        "test_acc": [],
+    }
+    best_epoch = 0
 
-    print(f"\n{'Epoch':>6}  {'Train Loss':>11}  {'Train Acc':>10}  "
-          f"{'Val Loss':>9}  {'Val Acc':>8}  {'LR':>10}  {'Time':>6}")
-    print("-" * 75)
+    print(
+        f"\n{'Epoch':>6}  {'Train Loss':>11}  {'Train Acc':>10}  "
+        f"{'Val Loss':>9}  {'Val Acc':>8}  {'Test Loss':>10}  {'Test Acc':>9}  "
+        f"{'LR':>10}  {'Time':>6}"
+    )
+    print("-" * 108)
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.perf_counter()
 
         tr_loss, tr_acc = train_epoch(model, train_loader, criterion, optimizer, device)
         vl_loss, vl_acc = validate_epoch(model, val_loader, criterion, device)
+        te_loss, te_acc = validate_epoch(model, test_loader, criterion, device)
         scheduler.step()
 
         history["train_loss"].append(tr_loss)
         history["train_acc"].append(tr_acc)
         history["val_loss"].append(vl_loss)
         history["val_acc"].append(vl_acc)
+        history["test_loss"].append(te_loss)
+        history["test_acc"].append(te_acc)
 
         lr  = optimizer.param_groups[0]["lr"]
         dt  = time.perf_counter() - t0
 
-        print(f"{epoch:>6}  {tr_loss:>11.4f}  {tr_acc:>9.4f}  "
-              f"{vl_loss:>9.4f}  {vl_acc:>8.4f}  {lr:>10.2e}  {dt:>5.1f}s")
+        print(
+            f"{epoch:>6}  {tr_loss:>11.4f}  {tr_acc:>9.4f}  "
+            f"{vl_loss:>9.4f}  {vl_acc:>8.4f}  {te_loss:>10.4f}  {te_acc:>9.4f}  "
+            f"{lr:>10.2e}  {dt:>5.1f}s"
+        )
 
+        previous_best = early_stop.best_loss
         early_stop(vl_loss, model)
+        if early_stop.best_loss < previous_best:
+            best_epoch = epoch
         if early_stop.stop:
             print(f"\nEarly stopping triggered at epoch {epoch}.")
             break
 
     # ── Save history ─────────────────────────────────────────────────────────
-    history_path = Path(args.output_dir) / "history.npz"
+    history["best_epoch"] = [best_epoch]
+    history_path = output_dir / "history.npz"
     np.savez(history_path, **{k: np.array(v) for k, v in history.items()})
     print(f"\nBest model   → {checkpoint_path}")
     print(f"Training log → {history_path}")
+
+    return {
+        "model_name": model_name,
+        "checkpoint": str(checkpoint_path),
+        "history_path": str(history_path),
+        "output_dir": str(output_dir),
+        "best_epoch": best_epoch,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +355,10 @@ def parse_args() -> argparse.Namespace:
                    help="DataLoader worker processes (0 = main process)")
     p.add_argument("--cpu",          action="store_true",
                    help="Force CPU even if CUDA is available")
+    p.add_argument("--model_name",   type=str,   default="LOBModel",
+                   help="Model architecture to train: LOBModel or LSTMModel")
+    p.add_argument("--max_samples",  type=int,   default=None,
+                   help="Optional cap for quick debugging runs")
     return p.parse_args()
 
 

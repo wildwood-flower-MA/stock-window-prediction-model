@@ -1,7 +1,7 @@
 """
 Evaluation & Scoring Pipeline — LOB Price Movement Prediction
 ==============================================================
-Loads a trained LOBModel checkpoint and produces a full classification report
+Loads a trained model checkpoint and produces a full classification report
 including per-class precision/recall/F1, Matthews Correlation Coefficient,
 Cohen's Kappa, and a confusion matrix plot.
 
@@ -38,7 +38,7 @@ from sklearn.metrics import (
     matthews_corrcoef,
 )
 
-from model import LOBModel
+from model import build_model
 from train import LOBDataset   # reuse Dataset defined in train.py
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def plot_confusion_matrix(
 # Main
 # ---------------------------------------------------------------------------
 
-def evaluate(args: argparse.Namespace) -> None:
+def evaluate(args: argparse.Namespace) -> dict:
     # ── Device ──────────────────────────────────────────────────────────────
     device = torch.device(
         "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
@@ -202,12 +202,13 @@ def evaluate(args: argparse.Namespace) -> None:
     )
 
     # ── Model ────────────────────────────────────────────────────────────────
-    model = LOBModel(
+    model_name = getattr(args, "model_name", "LOBModel")
+    model = build_model(
+        model_name=model_name,
         in_channels=X_test.shape[2],
-        cnn_channels=64,
-        gru_hidden=128,
         num_classes=3,
     ).to(device)
+    print(f"Model      : {model_name}")
 
     checkpoint = Path(args.checkpoint)
     if not checkpoint.exists():
@@ -261,6 +262,14 @@ def evaluate(args: argparse.Namespace) -> None:
     print(f"Probabilities saved → {out_dir / 'y_proba.npy'}")
     print(f"Metrics      saved → {metrics_path}")
 
+    return {
+        "model_name": model_name,
+        "scores": scores,
+        "metrics_path": str(metrics_path),
+        "output_dir": str(out_dir),
+        "checkpoint": str(checkpoint),
+    }
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -278,6 +287,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch_size",  type=int, default=128)
     p.add_argument("--cpu",         action="store_true",
                    help="Force CPU even if CUDA is available")
+    p.add_argument("--model_name",  type=str, default="LOBModel",
+                   help="Model architecture to evaluate: LOBModel or LSTMModel")
     return p.parse_args()
 
 

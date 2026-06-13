@@ -24,8 +24,11 @@ dependencies:
 - seaborn>=0.13
 
 # Notebooks
-- jupyter``
+- jupyter
 - ipykernel
+
+# HDF5
+- h5py>=3.12
 
 - pip:
   - tqdm>=4.66

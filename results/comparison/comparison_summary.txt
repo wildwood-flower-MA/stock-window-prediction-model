@@ -1,0 +1,22 @@
+LOBModel
+  best_epoch: 8
+  final_train_acc: 0.676000
+  final_test_acc: 0.299000
+  final_train_loss: 0.734198
+  final_test_loss: 1.812809
+  test_accuracy: 0.356712
+  test_f1_macro: 0.326338
+  test_mcc: 0.015404
+  test_kappa: 0.014427
+
+LSTMModel
+  best_epoch: 3
+  final_train_acc: 0.751600
+  final_test_acc: 0.306000
+  final_train_loss: 0.585235
+  final_test_loss: 1.540083
+  test_accuracy: 0.362837
+  test_f1_macro: 0.288776
+  test_mcc: 0.010674
+  test_kappa: 0.009566
+
