@@ -8,7 +8,7 @@ venv/
 virtual_env/
 .vscode/
 *.zip
-
+*h5
 **/__pycache__/
 *.pyc
 *.h5
