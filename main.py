@@ -38,8 +38,8 @@ CFG = types.SimpleNamespace(
     # ── Paths ────────────────────────────────────────────────────────────────
     raw_data_dir  = "raw_data",        # root folder containing BenchmarkDatasets/
     data_dir      = "data",           # output of prepare_data, input of train/eval
-    output_dir    = "checkpoints",    # best_model.pt + history.npz
-    results_dir   = "results",        # confusion matrix PNGs + metrics.txt
+    output_dir    = "checkpoints_5",    # best_model.pt + history.npz
+    results_dir   = "results_5",        # confusion matrix PNGs + metrics.txt
 
     # ── Dataset ──────────────────────────────────────────────────────────────
     horizon       = 4,                # 0=k1  1=k2  2=k3  3=k5  4=k10
@@ -48,20 +48,20 @@ CFG = types.SimpleNamespace(
     train_folds   = [1, 2, 3, 4, 5, 6, 7],
     val_folds     = [8],
     test_folds    = [9],
-    selected_features = [i for i in range(20)], # CECHY, NA KTORYCH MA SIE UCZYC
+    selected_features = [i for i in range(40)], # CECHY, NA KTORYCH MA SIE UCZYC
 
     # ── Training ─────────────────────────────────────────────────────────────
-    epochs        = 10,                # quick test (was 50)
-    batch_size    = 64,
-    lr            = 1e-3,
+    epochs        = 50,                # quick test (was 50)
+    batch_size    = 512,
+    lr            = 0.4*1e-4,
     weight_decay  = 1e-4,
-    patience      = 10,                # quick test (was 10)
+    patience      = 4,                # quick test (was 10)
     num_workers   = 0,
     cpu           = False,            # True → force CPU even if CUDA is present
-    max_samples   = 5000,             # None → full dataset; int → cap train size
+    max_samples   = None,             # None → full dataset; int → cap train size
 
     # ── Evaluation ───────────────────────────────────────────────────────────
-    eval_batch_size = 256,
+    eval_batch_size = 256*2,
     models          = ["LOBModel", "LSTMModel"],
 )
 

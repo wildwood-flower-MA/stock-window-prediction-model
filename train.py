@@ -24,37 +24,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-
+from prepare_data import LOBDataset, LABEL_ROW_OFFSET, LABEL_MAP
 from model import build_model
-
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
-
-class LOBDataset(Dataset):
-    """
-    Thin wrapper around pre-processed numpy arrays.
-
-    Args:
-        X : np.ndarray  (N, 100, 40)  float32  — LOB windows
-        y : np.ndarray  (N,)          int64    — class labels {0, 1, 2}
-    """
-
-    def __init__(self, X: np.ndarray, y: np.ndarray) -> None:
-        assert len(X) == len(y), "X and y must have the same number of samples"
-        # Keep as numpy arrays (possibly memory-mapped) — tensors are created
-        # per-sample in __getitem__ to avoid allocating the full dataset in RAM.
-        self.X = X
-        self.y = y
-
-    def __len__(self) -> int:
-        return len(self.y)
-
-    def __getitem__(self, idx: int):
-        x = torch.from_numpy(np.array(self.X[idx], dtype=np.float32))
-        y = torch.tensor(int(self.y[idx]), dtype=torch.int64)
-        return x, y
-
+import h5py
 
 # ---------------------------------------------------------------------------
 # Early Stopping
@@ -178,66 +150,35 @@ def train(args: argparse.Namespace) -> dict:
     )
     print(f"Device: {device}")
 
-    # ── Data ────────────────────────────────────────────────────────────────
+# ── Data ────────────────────────────────────────────────────────────────
     data_dir = Path(args.data_dir)
-
-    X_train = np.load(data_dir / "X_train.npy", mmap_mode="r")
-    y_train = np.load(data_dir / "y_train.npy", mmap_mode="r")
-    X_val   = np.load(data_dir / "X_val.npy",   mmap_mode="r")
-    y_val   = np.load(data_dir / "y_val.npy",   mmap_mode="r")
-    X_test  = np.load(data_dir / "X_test.npy",  mmap_mode="r")
-    y_test  = np.load(data_dir / "y_test.npy",  mmap_mode="r")
+    h5_path = str(data_dir / "lob_dataset.h5")
+    
+    train_ds = LOBDataset(h5_path, split="train", sequence_length=100, horizon_idx=args.horizon, selected_features=args.selected_features)
+    val_ds   = LOBDataset(h5_path, split="val",   sequence_length=100, horizon_idx=args.horizon, selected_features=args.selected_features)
+    test_ds  = LOBDataset(h5_path, split="test",  sequence_length=100, horizon_idx=args.horizon, selected_features=args.selected_features)
 
     max_samples = getattr(args, "max_samples", None)
     if max_samples is not None:
-        X_train = X_train[:max_samples]
-        y_train = y_train[:max_samples]
-        X_val   = X_val[:max(1, max_samples // 5)]
-        y_val   = y_val[:max(1, max_samples // 5)]
-        X_test  = X_test[:max(1, max_samples // 5)]
-        y_test  = y_test[:max(1, max_samples // 5)]
-        print(f"[debug] Capped to {max_samples} train / {len(X_val)} val samples")
+        train_ds.length = min(train_ds.length, max_samples)
+        val_ds.length   = min(val_ds.length, max(1, max_samples // 5))
+        test_ds.length  = min(test_ds.length, max(1, max_samples // 5))
+        print(f"[debug] Capped to {max_samples} train samples")
 
-    print(
-        f"Train samples : {len(X_train):,}  |  Val samples : {len(X_val):,}"
-        f"  |  Test samples : {len(X_test):,}"
-    )
-    print(f"Class distribution (train): {np.bincount(y_train.astype(int))}")
-
-    train_ds = LOBDataset(X_train, y_train)
-    val_ds   = LOBDataset(X_val,   y_val)
-    test_ds  = LOBDataset(X_test,  y_test)
+    print(f"Train samples : {len(train_ds):,}  |  Val samples : {len(val_ds):,}  |  Test samples : {len(test_ds):,}")
 
     import platform
     num_workers = 0 if platform.system() == "Windows" else args.num_workers
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=args.batch_size * 2,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=args.batch_size * 2,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=num_workers, pin_memory=(device.type == "cuda"))
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=(device.type == "cuda"))
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size * 2, shuffle=False, num_workers=num_workers, pin_memory=(device.type == "cuda"))
 
     # ── Model ────────────────────────────────────────────────────────────────
     model_name = getattr(args, "model_name", "LOBModel")
     model = build_model(
         model_name=model_name,
-        in_channels=X_train.shape[2],
+        in_channels=len(args.selected_features),
         num_classes=3,
     ).to(device)
 
@@ -247,10 +188,17 @@ def train(args: argparse.Namespace) -> dict:
     print(f"Parameters    : {total_params:,}")
 
     # ── Loss — class-balanced weights ────────────────────────────────────────
-    counts  = np.bincount(y_train.astype(int), minlength=3).astype(np.float32)
+    print("... HDF5 ...")
+    with h5py.File(h5_path, 'r') as f:
+        seq_len = train_ds.sequence_length #
+        raw_labels = f["train"][seq_len - 1 : len(train_ds) + seq_len - 1, LABEL_ROW_OFFSET + args.horizon]
+        #raw_labels = f["train"][:len(train_ds), LABEL_ROW_OFFSET + args.horizon]
+        y_train_calc = np.vectorize(LABEL_MAP.__getitem__)(raw_labels.astype(int))
+
+    counts  = np.bincount(y_train_calc, minlength=3).astype(np.float32)
     weights = torch.tensor(1.0 / (counts + 1e-6), dtype=torch.float32).to(device)
     weights = weights / weights.sum() * 3          # normalise to sum=3
-    criterion = nn.CrossEntropyLoss(weight=weights)
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.3)
 
     # ── Optimiser & Scheduler ────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(
@@ -359,6 +307,10 @@ def parse_args() -> argparse.Namespace:
                    help="Model architecture to train: LOBModel or LSTMModel")
     p.add_argument("--max_samples",  type=int,   default=None,
                    help="Optional cap for quick debugging runs")
+    p.add_argument("--horizon", type=int, default=4, help="Label horizon index")    
+    p.add_argument("--selected_features", type=int, nargs="+", default=list(range(40)),
+                   help="List of feature indices to use")
+    
     return p.parse_args()
 
 

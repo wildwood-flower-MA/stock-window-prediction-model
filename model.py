@@ -143,7 +143,34 @@ class LSTMEncoder(nn.Module):
         out, _ = self.lstm(x)
         out = self.layer_norm(out)
         return out
+        
+def build_model(
+    model_name: str,
+    in_channels: int=40,
+    num_classes: int=3,
+) -> nn.Module:
+    name=model_name.strip().lower()
 
+    if name=="lobmodel":
+        return LOBModel(
+            in_channels=in_channels,
+            cnn_channels=28,
+            gru_hidden=104,
+            num_classes=num_classes,
+        )
+
+    if name=="lstmmodel":
+        return LSTMModel(
+            in_channels=in_channels,
+            lstm_hidden1=52,
+            lstm_hidden2=60,
+            lstm_hidden3=72,
+            num_classes=num_classes,
+        )
+
+    raise ValueError(
+        f"Unknown model_name='{model_name}'. Expected one of: LOBModel, LSTMModel."
+    )
 
 # ---------------------------------------------------------------------------
 # 3. Temporal Attention
@@ -196,7 +223,7 @@ class ClassificationHead(nn.Module):
 
         self.fc1     = nn.Linear(hidden_size, 64)
         self.relu    = nn.ReLU()
-        self.dropout = nn.Dropout(p=0.2)
+        self.dropout = nn.Dropout(p=0.32)
         self.fc2     = nn.Linear(64, num_classes)
 
         self._init_weights()
@@ -217,6 +244,7 @@ class ClassificationHead(nn.Module):
 # ---------------------------------------------------------------------------
 # 5. Full LOB Model
 # ---------------------------------------------------------------------------
+
 
 class LOBModel(nn.Module):
     """
@@ -363,7 +391,6 @@ def build_model(
     raise ValueError(
         f"Unknown model_name='{model_name}'. Expected one of: LOBModel, LSTMModel."
     )
-
 # ---------------------------------------------------------------------------
 # Quick sanity check
 # ---------------------------------------------------------------------------
@@ -371,12 +398,13 @@ def build_model(
 if __name__ == "__main__":
     torch.manual_seed(42)
 
-    batch_size, seq_len, lob_features = 32, 100, 40
+    # Zmiana z 40 na np. 10 dla testu, albo pobranie długości jakiejś przykładowej listy
+    batch_size, seq_len, lob_features = 32, 100, 40 
     dummy_input = torch.randn(batch_size, seq_len, lob_features)
 
     for model_name, model in {
-        "LOBModel": LOBModel(),
-        "LSTMModel": LSTMModel(),
+        "LOBModel": LOBModel(in_channels=lob_features),
+        "LSTMModel": LSTMModel(in_channels=lob_features),
     }.items():
         model.eval()
 

@@ -84,38 +84,31 @@ def resolve_paths(
         paths.append(f"{base}/{fname}")
     return paths
 
+
 class LOBDataset(torch.utils.data.Dataset):
-    
     def __init__(self, h5_path: str, split: str, sequence_length: int, horizon_idx: int = 0, selected_features: list = None):
         self.h5_path = h5_path
         self.split = split
         self.sequence_length = sequence_length
-        self.horizon_idx = horizon_idx
-        self.dataset = None
         
         self.selected_features = selected_features if selected_features is not None else list(range(40))
         
         with h5py.File(self.h5_path, 'r') as f:
-            self.length = len(f[self.split]) - self.sequence_length
+            raw_data = f[self.split][:]
+
+        self.X = raw_data[:, self.selected_features].astype(np.float32)
+        raw_labels = raw_data[:, LABEL_ROW_OFFSET + horizon_idx]
+        map_func = np.vectorize(LABEL_MAP.__getitem__)
+        self.Y = map_func(raw_labels).astype(np.int64)
+        self.length = len(self.X) - self.sequence_length
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx):
-        if self.dataset is None:
-            self.file = h5py.File(self.h5_path, 'r')
-            self.dataset = self.file[self.split]
-            
-        window = self.dataset[idx : idx + self.sequence_length]
-
-        # ZMIANA: Używamy listy zapisanej w obiekcie
-        x = window[:, self.selected_features]
-        
-        y_raw = window[-1, LABEL_ROW_OFFSET + self.horizon_idx]
-        y = LABEL_MAP[int(y_raw)]
-        
-        return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.long)
-
+        x_window = self.X[idx : idx + self.sequence_length]
+        y_label = self.Y[idx + self.sequence_length - 1]
+        return torch.from_numpy(x_window), torch.as_tensor(y_label)
         
 def prepare(args: argparse.Namespace) -> None:
     data_dir = Path(args.data_dir)
